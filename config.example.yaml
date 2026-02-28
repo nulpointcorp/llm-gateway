@@ -1,0 +1,71 @@
+port: 8080
+log_level: info
+
+cache_mode: memory           # memory | redis | none
+cache_ttl: 1h
+cache_exclude_exact:
+  - gpt-4o-realtime
+  - claude-3-haiku
+cache_exclude_patterns:
+  - "^ft:"
+  - ".*-preview$"
+
+cors_origins:
+  - "*"
+
+app_base_url: "http://localhost:8080"
+
+allow_client_api_keys: false
+
+cb_error_threshold: 5
+cb_time_window: 60s
+cb_half_open_timeout: 30s
+
+max_retries: 3a
+provider_timeout: 30s
+
+rpm_limit: 0
+
+redis_url: "redis://localhost:6379"
+
+openai_api_key: "sk-..."
+openai_base_url: ""
+
+anthropic_api_key: ""
+anthropic_base_url: ""
+
+google_api_key: ""
+gemini_base_url: ""
+
+mistral_api_key: ""
+mistral_base_url: ""
+
+xai_api_key: ""
+deepseek_api_key: ""
+groq_api_key: ""
+together_api_key: ""
+perplexity_api_key: ""
+cerebras_api_key: ""
+moonshot_api_key: ""
+minimax_api_key: ""
+qwen_api_key: ""
+nebius_api_key: ""
+novita_api_key: ""
+bytedance_api_key: ""
+zai_api_key: ""
+canopywave_api_key: ""
+inference_api_key: ""
+nanogpt_api_key: ""
+
+vertex_project: ""
+vertex_location: "us-central1"
+
+aws_access_key_id: ""
+aws_secret_access_key: ""
+aws_session_token: ""
+aws_region: "us-east-1"
+bedrock_endpoint_url: ""
+
+azure_openai_endpoint: "https://myresource.openai.azure.com"
+azure_openai_api_key: ""
+azure_openai_api_version: "2024-12-01-preview"

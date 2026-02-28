@@ -1,0 +1,29 @@
+## Development overlay — hot-reload with Air
+##
+## Usage:
+##   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+##
+## Requires Air installed locally OR the cosmtrek/air image.
+## Install locally: go install github.com/air-verse/air@latest
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder    # use the builder stage so source is available
+    image: ""            # don't use the prod image
+    working_dir: /src
+    volumes:
+      - .:/src
+      - go_cache:/root/.cache/go
+    environment:
+      CGO_ENABLED: "0"
+      LOG_LEVEL: debug
+      CACHE_MODE: memory
+    command: ["go", "run", "./cmd/gateway"]
+    ports:
+      - "8080:8080"
+
+volumes:
+  go_cache:

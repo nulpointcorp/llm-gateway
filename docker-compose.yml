@@ -1,0 +1,58 @@
+## nulpoint Gateway — Docker Compose
+##
+## PROFILES
+##   (default)  gateway with in-memory cache — no Redis required
+##              docker compose up
+##
+##   redis      gateway with Redis-backed cache + rate limiting
+##              docker compose --profile redis up
+##
+## USAGE
+##   cp .env.example .env
+##   # fill in at least one provider API key
+##   docker compose up
+
+services:
+
+  # ── LLM Gateway ─────────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # In-memory cache is the default — no Redis needed.
+      # Override with CACHE_MODE=redis to use the Redis service below.
+      CACHE_MODE: ${CACHE_MODE:-memory}
+      REDIS_URL: ${REDIS_URL:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    depends_on:
+      redis:
+        condition: service_healthy
+        required: false   # only block when redis profile is active
+
+  # ── Redis (optional, enable with --profile redis) ───────────────────────────
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  redis_data:

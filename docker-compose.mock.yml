@@ -1,0 +1,96 @@
+## nulpoint Gateway — Mock Provider Stack
+##
+## Starts the LLM gateway pre-wired to local mock providers.
+## No real API keys needed — any token value is accepted.
+##
+## USAGE
+##   docker compose -f docker-compose.mock.yml up
+##   docker compose -f docker-compose.mock.yml up --build   # rebuild images
+##
+## ENDPOINTS (inside the stack)
+##   Gateway:           http://localhost:8080
+##   OpenAI mock:       http://localhost:19001
+##   Anthropic mock:    http://localhost:19002
+##   Gemini mock:       http://localhost:19003
+##   Mistral mock:      http://localhost:19004
+##   Bedrock mock:      http://localhost:19005
+##
+## TUNING (override via environment or .env.mock)
+##   MOCK_LATENCY_MS   — ms of artificial latency per request (default: 0)
+##   MOCK_ERROR_RATE   — fraction [0,1] of requests that return 500 (default: 0)
+##   MOCK_STREAM_WORDS — words in each streaming response (default: 10)
+##   PORT              — gateway port on the host (default: 8080)
+##
+## QUICK TEST
+##   curl http://localhost:8080/v1/chat/completions \
+##     -H "Authorization: Bearer any-token" \
+##     -H "Content-Type: application/json" \
+##     -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}'
+
+services:
+
+  # ── Mock LLM providers ────────────────────────────────────────────────────────
+  mock-providers:
+    build:
+      context: .
+      dockerfile: Dockerfile.mockproviders
+    ports:
+      - "19001:19001"   # OpenAI mock
+      - "19002:19002"   # Anthropic mock
+      - "19003:19003"   # Gemini mock
+      - "19004:19004"   # Mistral mock
+      - "19005:19005"   # Bedrock mock
+    environment:
+      MOCK_LATENCY_MS:   ${MOCK_LATENCY_MS:-0}
+      MOCK_ERROR_RATE:   ${MOCK_ERROR_RATE:-0}
+      MOCK_STREAM_WORDS: ${MOCK_STREAM_WORDS:-10}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:19001/v1/models || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    restart: unless-stopped
+
+  # ── LLM Gateway (wired to mock providers) ─────────────────────────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # Cache — in-memory, no external dependencies.
+      CACHE_MODE: memory
+
+      # Mock API keys — any non-empty value activates the provider.
+      OPENAI_API_KEY:    mock-key
+      ANTHROPIC_API_KEY: mock-key
+      GOOGLE_API_KEY:    mock-key
+      MISTRAL_API_KEY:   mock-key
+
+      # Redirect each provider to its mock server.
+      # The Anthropic SDK joins base + path, so the base must NOT include /v1.
+      OPENAI_BASE_URL:   http://mock-providers:19001/v1
+      ANTHROPIC_BASE_URL: http://mock-providers:19002
+      GEMINI_BASE_URL:   http://mock-providers:19003/v1beta
+      MISTRAL_BASE_URL:  http://mock-providers:19004/v1
+
+      # Bedrock mock — mock credentials + endpoint override.
+      AWS_ACCESS_KEY_ID:     mock-access
+      AWS_SECRET_ACCESS_KEY: mock-secret
+      AWS_REGION:            us-east-1
+      BEDROCK_ENDPOINT_URL:  http://mock-providers:19005
+
+      # Accept any client-supplied Authorization token.
+      ALLOW_CLIENT_API_KEYS: "false"
+    depends_on:
+      mock-providers:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
