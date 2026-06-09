@@ -16,6 +16,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -92,6 +94,10 @@ type Config struct {
 	// AllowClientAPIKeys enables forwarding client-supplied Authorization headers
 	// directly to the upstream provider. When false (default) the gateway only
 	// uses the API keys configured in this file/.env.
+	//
+	// Security note: when enabled, all configured upstream endpoints must remain
+	// pinned to explicitly allowed public provider hosts. Arbitrary/custom/local
+	// BaseURL overrides are rejected to prevent SSRF with bring-your-own-key mode.
 	AllowClientAPIKeys bool
 }
 
@@ -253,22 +259,22 @@ func Load() (*Config, error) {
 		Mistral:   ProviderConfig{APIKey: v.GetString("MISTRAL_API_KEY"), BaseURL: v.GetString("MISTRAL_BASE_URL")},
 
 		// OpenAI-compatible providers
-		XAI:        ProviderConfig{APIKey: v.GetString("XAI_API_KEY")},
-		DeepSeek:   ProviderConfig{APIKey: v.GetString("DEEPSEEK_API_KEY")},
-		Groq:       ProviderConfig{APIKey: v.GetString("GROQ_API_KEY")},
-		Together:   ProviderConfig{APIKey: v.GetString("TOGETHER_API_KEY")},
-		Perplexity: ProviderConfig{APIKey: v.GetString("PERPLEXITY_API_KEY")},
-		Cerebras:   ProviderConfig{APIKey: v.GetString("CEREBRAS_API_KEY")},
-		Moonshot:   ProviderConfig{APIKey: v.GetString("MOONSHOT_API_KEY")},
-		MiniMax:    ProviderConfig{APIKey: v.GetString("MINIMAX_API_KEY")},
-		Qwen:       ProviderConfig{APIKey: v.GetString("QWEN_API_KEY")},
-		Nebius:     ProviderConfig{APIKey: v.GetString("NEBIUS_API_KEY")},
-		NovitaAI:   ProviderConfig{APIKey: v.GetString("NOVITA_API_KEY")},
-		ByteDance:  ProviderConfig{APIKey: v.GetString("BYTEDANCE_API_KEY")},
-		ZAI:        ProviderConfig{APIKey: v.GetString("ZAI_API_KEY")},
-		CanopyWave: ProviderConfig{APIKey: v.GetString("CANOPYWAVE_API_KEY")},
-		Inference:  ProviderConfig{APIKey: v.GetString("INFERENCE_API_KEY")},
-		NanoGPT:    ProviderConfig{APIKey: v.GetString("NANOGPT_API_KEY")},
+		XAI:        ProviderConfig{APIKey: v.GetString("XAI_API_KEY"), BaseURL: v.GetString("XAI_BASE_URL")},
+		DeepSeek:   ProviderConfig{APIKey: v.GetString("DEEPSEEK_API_KEY"), BaseURL: v.GetString("DEEPSEEK_BASE_URL")},
+		Groq:       ProviderConfig{APIKey: v.GetString("GROQ_API_KEY"), BaseURL: v.GetString("GROQ_BASE_URL")},
+		Together:   ProviderConfig{APIKey: v.GetString("TOGETHER_API_KEY"), BaseURL: v.GetString("TOGETHER_BASE_URL")},
+		Perplexity: ProviderConfig{APIKey: v.GetString("PERPLEXITY_API_KEY"), BaseURL: v.GetString("PERPLEXITY_BASE_URL")},
+		Cerebras:   ProviderConfig{APIKey: v.GetString("CEREBRAS_API_KEY"), BaseURL: v.GetString("CEREBRAS_BASE_URL")},
+		Moonshot:   ProviderConfig{APIKey: v.GetString("MOONSHOT_API_KEY"), BaseURL: v.GetString("MOONSHOT_BASE_URL")},
+		MiniMax:    ProviderConfig{APIKey: v.GetString("MINIMAX_API_KEY"), BaseURL: v.GetString("MINIMAX_BASE_URL")},
+		Qwen:       ProviderConfig{APIKey: v.GetString("QWEN_API_KEY"), BaseURL: v.GetString("QWEN_BASE_URL")},
+		Nebius:     ProviderConfig{APIKey: v.GetString("NEBIUS_API_KEY"), BaseURL: v.GetString("NEBIUS_BASE_URL")},
+		NovitaAI:   ProviderConfig{APIKey: v.GetString("NOVITA_API_KEY"), BaseURL: v.GetString("NOVITA_BASE_URL")},
+		ByteDance:  ProviderConfig{APIKey: v.GetString("BYTEDANCE_API_KEY"), BaseURL: v.GetString("BYTEDANCE_BASE_URL")},
+		ZAI:        ProviderConfig{APIKey: v.GetString("ZAI_API_KEY"), BaseURL: v.GetString("ZAI_BASE_URL")},
+		CanopyWave: ProviderConfig{APIKey: v.GetString("CANOPYWAVE_API_KEY"), BaseURL: v.GetString("CANOPYWAVE_BASE_URL")},
+		Inference:  ProviderConfig{APIKey: v.GetString("INFERENCE_API_KEY"), BaseURL: v.GetString("INFERENCE_BASE_URL")},
+		NanoGPT:    ProviderConfig{APIKey: v.GetString("NANOGPT_API_KEY"), BaseURL: v.GetString("NANOGPT_BASE_URL")},
 
 		// Google Vertex AI
 		VertexAI: VertexAIConfig{
@@ -335,100 +341,322 @@ func (c *Config) validate() error {
 	// At least one provider must be configured unless client-supplied keys are enabled.
 	if !c.AllowClientAPIKeys && !c.AtLeastOneProviderKey() {
 		return fmt.Errorf(
-			"config: at least one provider API key is required " +
-				"(OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY, " +
-				"XAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, " +
-				"PERPLEXITY_API_KEY, CEREBRAS_API_KEY, MOONSHOT_API_KEY, MINIMAX_API_KEY, " +
-				"QWEN_API_KEY, NEBIUS_API_KEY, NOVITA_API_KEY, BYTEDANCE_API_KEY, " +
-				"ZAI_API_KEY, CANOPYWAVE_API_KEY, INFERENCE_API_KEY, NANOGPT_API_KEY, " +
-				"VERTEX_PROJECT, AWS_ACCESS_KEY_ID, or AZURE_OPENAI_API_KEY). " +
-				"Set ALLOW_CLIENT_API_KEYS=true to require clients to supply their own keys.",
+			"config: at least one provider API key is required "+
+				"(OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY, "+
+				"XAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, "+
+				"PERPLEXITY_API_KEY, CEREBRAS_API_KEY, MOONSHOT_API_KEY, MINIMAX_API_KEY, "+
+				"QWEN_API_KEY, NEBIUS_API_KEY, NOVITA_API_KEY, BYTEDANCE_API_KEY, "+
+				"ZAI_API_KEY, CANOPYWAVE_API_KEY, INFERENCE_API_KEY, NANOGPT_API_KEY, "+
+				"or enable ALLOW_CLIENT_API_KEYS=true)",
 		)
 	}
 
-	// Redis URL is required when cache mode is "redis".
-	if c.Cache.Mode == "redis" && c.Redis.URL == "" {
-		return fmt.Errorf(
-			"config: REDIS_URL is required when CACHE_MODE=redis; " +
-				"set CACHE_MODE=memory to use the built-in in-process cache",
-		)
-	}
-
-	// Validate cache mode value.
-	switch c.Cache.Mode {
-	case "redis", "memory", "none":
-	default:
-		return fmt.Errorf(
-			"config: invalid CACHE_MODE %q; must be one of: redis, memory, none",
-			c.Cache.Mode,
-		)
-	}
-
-	// Validate log level.
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
-		return fmt.Errorf(
-			"config: invalid LOG_LEVEL %q; must be one of: debug, info, warn, error",
-			c.LogLevel,
-		)
+		return fmt.Errorf("config: invalid LOG_LEVEL %q (must be debug, info, warn, error)", c.LogLevel)
 	}
 
-	// Circuit breaker sanity checks.
+	switch c.Cache.Mode {
+	case "memory", "redis", "none":
+	default:
+		return fmt.Errorf("config: invalid CACHE_MODE %q (must be memory, redis, none)", c.Cache.Mode)
+	}
+
+	if c.Cache.Mode == "redis" && strings.TrimSpace(c.Redis.URL) == "" {
+		return errors.New("config: REDIS_URL is required when CACHE_MODE=redis")
+	}
+
+	if c.Cache.TTL < 0 {
+		return errors.New("config: CACHE_TTL must be >= 0")
+	}
+
 	if c.CircuitBreaker.ErrorThreshold < 1 {
-		return fmt.Errorf("config: CB_ERROR_THRESHOLD must be ≥ 1, got %d", c.CircuitBreaker.ErrorThreshold)
+		return errors.New("config: CB_ERROR_THRESHOLD must be >= 1")
 	}
 	if c.CircuitBreaker.TimeWindow <= 0 {
-		return fmt.Errorf("config: CB_TIME_WINDOW must be a positive duration")
+		return errors.New("config: CB_TIME_WINDOW must be > 0")
 	}
+	if c.CircuitBreaker.HalfOpenTimeout <= 0 {
+		return errors.New("config: CB_HALF_OPEN_TIMEOUT must be > 0")
+	}
+
+	if c.RateLimit.RPMLimit < 0 {
+		return errors.New("config: RPM_LIMIT must be >= 0")
+	}
+
 	if c.Failover.MaxRetries < 1 {
-		return fmt.Errorf("config: MAX_RETRIES must be ≥ 1, got %d", c.Failover.MaxRetries)
+		return errors.New("config: MAX_RETRIES must be >= 1")
+	}
+	if c.Failover.ProviderTimeout <= 0 {
+		return errors.New("config: PROVIDER_TIMEOUT must be > 0")
+	}
+
+	if strings.TrimSpace(c.AppBaseURL) != "" {
+		if err := validatePublicHTTPURL("APP_BASE_URL", c.AppBaseURL, false, nil); err != nil {
+			return err
+		}
+	}
+
+	if strings.TrimSpace(c.Azure.Endpoint) != "" {
+		if err := validatePublicHTTPURL("AZURE_OPENAI_ENDPOINT", c.Azure.Endpoint, false, []string{
+			"openai.azure.com",
+			"azure.com",
+		}); err != nil {
+			return err
+		}
+	}
+
+	if strings.TrimSpace(c.Bedrock.EndpointURL) != "" {
+		if err := validatePublicHTTPURL("BEDROCK_ENDPOINT_URL", c.Bedrock.EndpointURL, !c.AllowClientAPIKeys, []string{
+			"amazonaws.com",
+			"amazonaws.com.cn",
+		}); err != nil {
+			return err
+		}
+	}
+
+	if err := c.validateProviderBaseURLs(); err != nil {
+		return err
+	}
+
+	if c.AllowClientAPIKeys {
+		if err := c.validateBYOKUpstreams(); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-// AtLeastOneProviderKey returns true if at least one provider is configured.
+// AtLeastOneProviderKey reports whether any provider auth is configured.
 func (c *Config) AtLeastOneProviderKey() bool {
-	return c.OpenAI.APIKey != "" ||
-		c.Anthropic.APIKey != "" ||
-		c.Gemini.APIKey != "" ||
-		c.Mistral.APIKey != "" ||
-		c.XAI.APIKey != "" ||
-		c.DeepSeek.APIKey != "" ||
-		c.Groq.APIKey != "" ||
-		c.Together.APIKey != "" ||
-		c.Perplexity.APIKey != "" ||
-		c.Cerebras.APIKey != "" ||
-		c.Moonshot.APIKey != "" ||
-		c.MiniMax.APIKey != "" ||
-		c.Qwen.APIKey != "" ||
-		c.Nebius.APIKey != "" ||
-		c.NovitaAI.APIKey != "" ||
-		c.ByteDance.APIKey != "" ||
-		c.ZAI.APIKey != "" ||
-		c.CanopyWave.APIKey != "" ||
-		c.Inference.APIKey != "" ||
-		c.NanoGPT.APIKey != "" ||
-		c.VertexAI.Project != "" ||
-		c.Bedrock.AccessKey != "" ||
-		c.Azure.APIKey != ""
+	return hasValue(
+		c.OpenAI.APIKey,
+		c.Anthropic.APIKey,
+		c.Gemini.APIKey,
+		c.Mistral.APIKey,
+		c.XAI.APIKey,
+		c.DeepSeek.APIKey,
+		c.Groq.APIKey,
+		c.Together.APIKey,
+		c.Perplexity.APIKey,
+		c.Cerebras.APIKey,
+		c.Moonshot.APIKey,
+		c.MiniMax.APIKey,
+		c.Qwen.APIKey,
+		c.Nebius.APIKey,
+		c.NovitaAI.APIKey,
+		c.ByteDance.APIKey,
+		c.ZAI.APIKey,
+		c.CanopyWave.APIKey,
+		c.Inference.APIKey,
+		c.NanoGPT.APIKey,
+		c.Azure.APIKey,
+		c.VertexAI.Project,
+		c.Bedrock.AccessKey,
+	)
 }
 
-// loadDotEnv populates process env vars from a .env file when present.
-func loadDotEnv(path string) error {
-	info, err := os.Stat(path)
+func hasValue(values ...string) bool {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) validateProviderBaseURLs() error {
+	providers := []struct {
+		name          string
+		baseURL       string
+		allowOverride bool
+		allowedHosts  []string
+	}{
+		{"OPENAI_BASE_URL", c.OpenAI.BaseURL, !c.AllowClientAPIKeys, []string{"openai.com"}},
+		{"ANTHROPIC_BASE_URL", c.Anthropic.BaseURL, !c.AllowClientAPIKeys, []string{"anthropic.com"}},
+		{"GEMINI_BASE_URL", c.Gemini.BaseURL, !c.AllowClientAPIKeys, []string{"googleapis.com", "google.com"}},
+		{"MISTRAL_BASE_URL", c.Mistral.BaseURL, !c.AllowClientAPIKeys, []string{"mistral.ai"}},
+		{"XAI_BASE_URL", c.XAI.BaseURL, !c.AllowClientAPIKeys, []string{"x.ai"}},
+		{"DEEPSEEK_BASE_URL", c.DeepSeek.BaseURL, !c.AllowClientAPIKeys, []string{"deepseek.com"}},
+		{"GROQ_BASE_URL", c.Groq.BaseURL, !c.AllowClientAPIKeys, []string{"groq.com"}},
+		{"TOGETHER_BASE_URL", c.Together.BaseURL, !c.AllowClientAPIKeys, []string{"together.xyz"}},
+		{"PERPLEXITY_BASE_URL", c.Perplexity.BaseURL, !c.AllowClientAPIKeys, []string{"perplexity.ai"}},
+		{"CEREBRAS_BASE_URL", c.Cerebras.BaseURL, !c.AllowClientAPIKeys, []string{"cerebras.ai"}},
+		{"MOONSHOT_BASE_URL", c.Moonshot.BaseURL, !c.AllowClientAPIKeys, []string{"moonshot.cn", "kimi.com"}},
+		{"MINIMAX_BASE_URL", c.MiniMax.BaseURL, !c.AllowClientAPIKeys, []string{"minimax.io"}},
+		{"QWEN_BASE_URL", c.Qwen.BaseURL, !c.AllowClientAPIKeys, []string{"aliyuncs.com", "dashscope.com"}},
+		{"NEBIUS_BASE_URL", c.Nebius.BaseURL, !c.AllowClientAPIKeys, []string{"nebius.com", "nebius.ai"}},
+		{"NOVITA_BASE_URL", c.NovitaAI.BaseURL, !c.AllowClientAPIKeys, []string{"novita.ai"}},
+		{"BYTEDANCE_BASE_URL", c.ByteDance.BaseURL, !c.AllowClientAPIKeys, []string{"volces.com", "volcengine.com"}},
+		{"ZAI_BASE_URL", c.ZAI.BaseURL, !c.AllowClientAPIKeys, []string{"z.ai", "bigmodel.cn"}},
+		{"CANOPYWAVE_BASE_URL", c.CanopyWave.BaseURL, !c.AllowClientAPIKeys, []string{"canopywave.com"}},
+		{"INFERENCE_BASE_URL", c.Inference.BaseURL, !c.AllowClientAPIKeys, []string{"inference.net"}},
+		{"NANOGPT_BASE_URL", c.NanoGPT.BaseURL, !c.AllowClientAPIKeys, []string{"nanogpt.com"}},
+	}
+
+	for _, p := range providers {
+		if strings.TrimSpace(p.baseURL) == "" {
+			continue
+		}
+		if err := validatePublicHTTPURL(p.name, p.baseURL, p.allowOverride, p.allowedHosts); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *Config) validateBYOKUpstreams() error {
+	if strings.TrimSpace(c.OpenAI.BaseURL) != "" {
+		if err := validatePublicHTTPURL("OPENAI_BASE_URL", c.OpenAI.BaseURL, false, []string{"openai.com"}); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(c.Anthropic.BaseURL) != "" {
+		if err := validatePublicHTTPURL("ANTHROPIC_BASE_URL", c.Anthropic.BaseURL, false, []string{"anthropic.com"}); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(c.Gemini.BaseURL) != "" {
+		if err := validatePublicHTTPURL("GEMINI_BASE_URL", c.Gemini.BaseURL, false, []string{"googleapis.com", "google.com"}); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(c.Mistral.BaseURL) != "" {
+		if err := validatePublicHTTPURL("MISTRAL_BASE_URL", c.Mistral.BaseURL, false, []string{"mistral.ai"}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePublicHTTPURL(fieldName, raw string, allowAnyPublicHost bool, allowedHostSuffixes []string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("config: invalid %s URL: %w", fieldName, err)
+	}
+
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("config: %s must use http or https", fieldName)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("config: %s must include a host", fieldName)
+	}
+	if u.User != nil {
+		return fmt.Errorf("config: %s must not include userinfo", fieldName)
+	}
+
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("config: %s must include a valid hostname", fieldName)
+	}
+
+	if isLocalOrPrivateHost(host) {
+		return fmt.Errorf("config: %s must not point to localhost, private, loopback, link-local, multicast, or unspecified addresses", fieldName)
+	}
+
+	if !allowAnyPublicHost && len(allowedHostSuffixes) > 0 && !hostMatchesAllowedSuffixes(host, allowedHostSuffixes) {
+		return fmt.Errorf("config: %s host %q is not in the allowed upstream list", fieldName, host)
+	}
+
+	return nil
+}
+
+func hostMatchesAllowedSuffixes(host string, suffixes []string) bool {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, s := range suffixes {
+		s = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(s, ".")))
+		if s == "" {
+			continue
+		}
+		if h == s || strings.HasSuffix(h, "."+s) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocalOrPrivateHost(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if h == "" {
+		return true
+	}
+
+	switch h {
+	case "localhost", "localhost.localdomain":
+		return true
+	}
+
+	if ip := net.ParseIP(h); ip != nil {
+		return isDisallowedIP(ip)
+	}
+
+	return false
+}
+
+func isDisallowedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() || ip.IsUnspecified() {
+		return true
+	}
+
+	if v4 := ip.To4(); v4 != nil {
+		// 0.0.0.0/8
+		if v4[0] == 0 {
+			return true
+		}
+		// 100.64.0.0/10 (CGNAT)
+		if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+			return true
+		}
+		// 169.254.0.0/16
+		if v4[0] == 169 && v4[1] == 254 {
+			return true
+		}
+		// 198.18.0.0/15 (benchmarking)
+		if v4[0] == 198 && (v4[1] == 18 || v4[1] == 19) {
+			return true
+		}
+		// 224.0.0.0/4 multicast and 240.0.0.0/4 reserved
+		if v4[0] >= 224 {
+			return true
+		}
+		return false
+	}
+
+	// IPv6 unique-local fc00::/7
+	if len(ip) == net.IPv6len {
+		if ip[0]&0xfe == 0xfc {
+			return true
+		}
+		// fe80::/10 link-local
+		if ip[0] == 0xfe && (ip[1]&0xc0) == 0x80 {
+			return true
+		}
+		// ff00::/8 multicast
+		if ip[0] == 0xff {
+			return true
+		}
+	}
+
+	return false
+}
+
+func loadDotEnv(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("config: failed to stat %s: %w", path, err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("config: %s is a directory, expected a file", path)
+		return fmt.Errorf("config: stat %s: %w", path, err)
 	}
 	if err := gotenv.Load(path); err != nil {
-		return fmt.Errorf("config: failed to load %s: %w", path, err)
+		return fmt.Errorf("config: load %s: %w", path, err)
 	}
 	return nil
 }
